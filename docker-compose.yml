@@ -1,0 +1,31 @@
+
+services:
+
+  # service1:
+  #     build:
+  #       context: ./multiplication
+  #       dockerfile: Dockerfile
+  #     environment:
+  #     - SPRING_PROFILES_ACTIVE=docker
+  #     - SPRING_CLOUD_CONSUL_HOST=consul
+  #     - LOKI_HOST=http://loki:3100/loki/api/v1/push
+  #     depends_on:
+  #       - rabbitmq-dev
+  #       - consul-importer
+  #     networks:
+  #       - spring-rabbitmq-logging
+
+  rabbitmq-dev:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    networks:
+      - spring-rabbitmq-logging
+      
+networks:
+  spring-rabbitmq-logging:
+    driver: bridge
+# Prometheus: http://localhost:9090/
+# Grafana: http://localhost:3000/
