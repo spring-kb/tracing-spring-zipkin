@@ -1,238 +1,275 @@
-# A Simple Solution for Log Centralization Using Spring and RabbitMQ
-You’ll set up a new microservice to aggregate logs from all your Spring Boot applications. 
-To keep it simple, it won’t have a data layer to persist logs; it’ll just receive log lines from 
-other services and print them together to the standard output. This basic solution will 
-serve to demonstrate this pattern and the next one, distributed tracing.
+Tracing
+=======
 
-To channel the log outputs, you’ll use a tool you already have in your system and is 
-perfect for that purpose: RabbitMQ. To capture each logged line in the applications and 
-send them as RabbitMQ messages, you’ll benefit from Logback (https://logback
-.qos.ch/), the logger implementation you’ve been using within Spring Boot. Logback 
-is a logging framework for Java that implements SL4J (Simple Logging Facade for Java). 
-Given that this tool is driven by an external configuration file, you don’t need to modify 
-the code in your applications.
+Spring Boot Actuator provides dependency management and auto-configuration for [Micrometer Tracing](https://docs.micrometer.io/tracing/reference/1.3), a facade for popular tracer libraries.
 
-In Logback, the piece of logic that writes a log line to the specific destination is called 
-an appender. This logging library includes some built-in appenders to print messages 
-to the console (ConsoleAppender) or files (FileAppender and RollingFileAppender). 
-You didn’t need to configure them because Spring Boot includes some default Logback 
-configuration within its dependencies and also sets up the printed message patterns.
+To learn more about Micrometer Tracing capabilities, see its [reference documentation](https://docs.micrometer.io/tracing/reference/1.3).
 
-The good news is that Spring AMQP provides a Logback AMQP logging appender 
-that does exactly what you need: it takes each log line and produces a message to a given 
-exchange in RabbitMQ, with a format and some extra options that you can customize.
-First, let’s prepare the Logback configuration you need to add to your applications. 
-Spring Boot allows you to extend the defaults by creating a file named logback-spring.
-xml in the application resources folder (src/main/resources), which will be picked up 
-automatically upon application initialization. See Listing 8-41. In this file, you import 
-the existing default values and create and set a new appender for all messages that have 
-level INFO or higher. The AMQP appender documentation (https://docs.spring.io/
-spring-amqp/docs/current/reference/html/#logging) lists all parameters and their 
-meanings; let’s look at the ones you need.
-* applicationId: Set it to the application name so you can distinguish 
-the source when you aggregate logs.
-* host: This is the host where RabbitMQ is running. Since it can be 
-different per environment, you’ll connect this value to the 
-spring.rabbitmq.host Spring property. Spring allows you to do this 
-via the springProperty tag. You give this Logback property a name, 
-rabbitMQHost, and you use the ${rabbitMQHost:-localhost} syntax 
-to either use the property value if it’s set or use the default localhost
-(defaults are set with the :- separator).
-* routingKeyPattern: This is the routing key per message, which you 
-set to a concatenation of the applicationId and level (notated with 
-%p) for more flexibility if you want to filter on the consumer side.
-* exchangeName: Specify the name of the exchange in RabbitMQ to 
-publish messages. It’ll be a topic exchange by default, so you can call 
-it logs.topic.
-* declareExchange: Set it to true to create the exchange if it’s not 
-there yet.
-* durable: Also set this to true so the exchange survives server restarts.
-* deliveryMode: Make it PERSISTENT so log messages are stored until 
-they’re consumed by the aggregator.
-* generateId: Set it to true so each message will have a unique 
-identifier.
-* charset: It’s a good practice to set it to UTF-8 to make sure all parties 
-use the same encoding.
+[](#actuator.micrometer-tracing.tracers)Supported Tracers
+---------------------------------------------------------
 
-Listing 8-41 shows the full contents of the logback-spring.xml file in the 
-Gamification project. Note how you’re adding a layout with a custom pattern to your 
-new appender. This way, you can encode your messages including not only the message 
-(%msg) but also some extra information like the time (%d{HH:mm:ss.SSS}), the thread 
-name ([%t]), and the logger class (%logger{36}). If you’re curious about the pattern 
-notation, check out the Logback’s reference docs (https://logback.qos.ch/manual/
-layouts.html#conversionWord). The last part of the file configures the root logger (the 
-default one) to use both the CONSOLE appender, defined in one of the included files, and 
-the newly defined AMQP appender.
+Spring Boot ships auto-configuration for the following tracers:
 
-```xml
-<configuration>
-    <include resource="org/springframework/boot/logging/logback/
-    defaults.xml" />
-    <include resource="org/springframework/boot/logging/logback/console-
-    appender.xml" />
-    <springProperty scope="context" name="rabbitMQHost" source="spring.
-    rabbitmq.host"/>
-    <appender name="AMQP"
-    class="org.springframework.amqp.rabbit.logback.AmqpAppender">
-        <layout>
-            <pattern>%d{HH:mm:ss.SSS} [%t] %logger{36} - %msg</pattern>
-        </layout>
-        <applicationId>gamification</applicationId>
-        <host>${rabbitMQHost:-localhost}</host>
-        <routingKeyPattern>%property{applicationId}.%p</routingKeyPattern>
-        <exchangeName>logs.topic</exchangeName>
-        <declareExchange>true</declareExchange>
-        <durable>true</durable>
-        <deliveryMode>PERSISTENT</deliveryMode>
-        <generateId>true</generateId>
-        <charset>UTF-8</charset>
-    </appender>
-    <root level="INFO">
-        <appender-ref ref="CONSOLE" />
-        <appender-ref ref="AMQP" />
-    </root>
-</configuration>
-```
-You have to make sure you add this file to the three Spring Boot projects you have: 
-Multiplication, Gamification, and Gateway. In each one of them, you must change the 
-applicationId value accordingly.
-In addition to this basic setup of log producers, you can adjust the log level for the 
-class that the appender uses to connect to RabbitMQ as WARN. This is an optional step, 
-but it avoids hundreds of logs when the RabbitMQ server is not available (e.g., while 
-starting up your system). Since the appender is configured during the bootstrap phase, 
-you need to add this configuration setting to the corresponding bootstrap.properties
-and boostrap.yml files, depending on the project. See Listings 8-42 and 8-43.
+*   [OpenTelemetry](https://opentelemetry.io/) with [Zipkin](https://zipkin.io/), [Wavefront](https://docs.wavefront.com/), or [OTLP](https://opentelemetry.io/docs/reference/specification/protocol/)
+    
+*   [OpenZipkin Brave](https://github.com/openzipkin/brave) with [Zipkin](https://zipkin.io/) or [Wavefront](https://docs.wavefront.com/)
+    
 
-```console
-logging.level.org.springframework.amqp.rabbit.connection.
-CachingConnectionFactory = WARN
-```
-The next time you start your applications, all logs will be output not only to the 
-console but also as messages produced to the logs.topic exchange in RabbitMQ. You 
-can verify that by accessing the RabbitMQ Web UI at localhost:15672
+[](#actuator.micrometer-tracing.getting-started)Getting Started
+---------------------------------------------------------------
 
-## Consuming Logs and Printing Them
-Now that you have all logs together published to an exchange, you’ll build the consumer 
-side: a new microservice that consumes all these messages and outputs them together.
+We need an example application that we can use to get started with tracing. For our purposes, the simple “Hello World!” web application that’s covered in the [Developing Your First Spring Boot Application](../../tutorial/first-application/index.html) section will suffice. We’re going to use the OpenTelemetry tracer with Zipkin as trace backend.
 
-First, navigate to the Spring Initializr site start.spring.io (https://start.spring.io/) 
-and create a logs project using the same setup as you chose for other applications: Maven 
-and JDK 17. In the list of dependencies, add Spring for RabbitMQ, Spring Web, Validation, 
-Spring Boot Actuator, Lombok, and Consul Configuration. Note that you don’t need to make 
-this service discoverable, so don’t add Consul Discovery
+To recap, our main application code looks like this:
 
-Once you import this project into your workspace, you can add some configuration 
-to make it possible to connect to the configuration server. You’re not going to add any 
-specific configuration for now, but it’s good to do this to make it consistent with the 
-rest of the microservices. In the main/src/resources folder, copy the contents of the 
-bootstrap.properties file you included in other projects. Set the application name and 
-a dedicated port in the application.properties file as well. See Listing 8-44.
-
-```console
-spring.application.name=logs
-server.port=8580
-```
-
-You need a Spring Boot configuration class to declare the exchange, the queue where 
-you want to consume the messages from, and the binding object to attach the queue 
-to the topic exchange with a binding key pattern to consume all of them containing the 
-special character (#). See Listing 8-45. Remember that since you added the logging level 
-to the routing keys, you can also adjust this value to get only errors, for example. Anyway, 
-in this case, subscribe to all messages (#).
-package microservices.book.logs;
-import org.springframework.amqp.core.*;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-```java
-@Configuration
-public class AMQPConfiguration {
-    @Bean
-    public TopicExchange logsExchange() {
-        return ExchangeBuilder.topicExchange("logs.topic")
-        .durable(true)
-        .build();
+    import org.apache.commons.logging.Log;
+    import org.apache.commons.logging.LogFactory;
+    
+    import org.springframework.boot.SpringApplication;
+    import org.springframework.boot.autoconfigure.SpringBootApplication;
+    import org.springframework.web.bind.annotation.RequestMapping;
+    import org.springframework.web.bind.annotation.RestController;
+    
+    @RestController
+    @SpringBootApplication
+    public class MyApplication {
+    
+    	private static final Log logger = LogFactory.getLog(MyApplication.class);
+    
+    	@RequestMapping("/")
+    	String home() {
+    		logger.info("home() has been called");
+    		return "Hello World!";
+    	}
+    
+    	public static void main(String[] args) {
+    		SpringApplication.run(MyApplication.class, args);
+    	}
+    
     }
 
-    @Bean
-    public Queue logsQueue() {
-        return QueueBuilder.durable("logs.queue").build();
+There’s an added logger statement in the `home()` method, which will be important later.
+
+Now we have to add the following dependencies:
+
+*   `org.springframework.boot:spring-boot-starter-actuator`
+    
+*   `io.micrometer:micrometer-tracing-bridge-otel` - bridges the Micrometer Observation API to OpenTelemetry.
+    
+*   `io.opentelemetry:opentelemetry-exporter-zipkin` - reports [traces](https://docs.micrometer.io/tracing/reference/1.3/glossary) to Zipkin.
+    
+
+Add the following application properties:
+
+*   Properties
+    
+*   YAML
+    
+
+    management.tracing.sampling.probability=1
+
+    management:
+      tracing:
+        sampling:
+          probability: 1.0
+
+By default, Spring Boot samples only 10% of requests to prevent overwhelming the trace backend. This property switches it to 100% so that every request is sent to the trace backend.
+
+To collect and visualize the traces, we need a running trace backend. We use Zipkin as our trace backend here. The [Zipkin Quickstart guide](https://zipkin.io/pages/quickstart) provides instructions how to start Zipkin locally.
+
+After Zipkin is running, you can start your application.
+
+If you open a web browser to `[localhost:8080](http://localhost:8080)`, you should see the following output:
+
+    Hello World!
+
+Behind the scenes, an observation has been created for the HTTP request, which in turn gets bridged to OpenTelemetry, which reports a new trace to Zipkin.
+
+Now open the Zipkin UI at `[localhost:9411](http://localhost:9411)` and press the "Run Query" button to list all collected traces. You should see one trace. Press the "Show" button to see the details of that trace.
+
+[](#actuator.micrometer-tracing.logging)Logging Correlation IDs
+---------------------------------------------------------------
+
+Correlation IDs provide a helpful way to link lines in your log files to spans/traces. If you are using Micrometer Tracing, Spring Boot will include correlation IDs in your logs by default.
+
+The default correlation ID is built from `traceId` and `spanId` [MDC](https://logback.qos.ch/manual/mdc.html) values. For example, if Micrometer Tracing has added an MDC `traceId` of `803B448A0489F84084905D3093480352` and an MDC `spanId` of `3425F23BB2432450` the log output will include the correlation ID `[803B448A0489F84084905D3093480352-3425F23BB2432450]`.
+
+If you prefer to use a different format for your correlation ID, you can use the `logging.pattern.correlation` property to define one. For example, the following will provide a correlation ID for Logback in format previously used by Spring Cloud Sleuth:
+
+*   Properties
+    
+*   YAML
+    
+
+    logging.pattern.correlation=[${spring.application.name:},%X{traceId:-},%X{spanId:-}] 
+    logging.include-application-name=false
+
+    logging:
+      pattern:
+        correlation: "[${spring.application.name:},%X{traceId:-},%X{spanId:-}] "
+      include-application-name: false
+
+In the example above, `logging.include-application-name` is set to `false` to avoid the application name being duplicated in the log messages (`logging.pattern.correlation` already contains it). It’s also worth mentioning that `logging.pattern.correlation` contains a trailing space so that it is separated from the logger name that comes right after it by default.
+
+[](#actuator.micrometer-tracing.propagating-traces)Propagating Traces
+---------------------------------------------------------------------
+
+To automatically propagate traces over the network, use the auto-configured [`RestTemplateBuilder`](../io/rest-client.html#io.rest-client.resttemplate), [`RestClient.Builder`](../io/rest-client.html#io.rest-client.restclient) or [`WebClient.Builder`](../io/rest-client.html#io.rest-client.webclient) to construct the client.
+
+If you create the `RestTemplate`, the `RestClient` or the `WebClient` without using the auto-configured builders, automatic trace propagation won’t work!
+
+[](#actuator.micrometer-tracing.tracer-implementations)Tracer Implementations
+-----------------------------------------------------------------------------
+
+As Micrometer Tracer supports multiple tracer implementations, there are multiple dependency combinations possible with Spring Boot.
+
+All tracer implementations need the `org.springframework.boot:spring-boot-starter-actuator` dependency.
+
+### [](#actuator.micrometer-tracing.tracer-implementations.otel-zipkin)OpenTelemetry With Zipkin
+
+Tracing with OpenTelemetry and reporting to Zipkin requires the following dependencies:
+
+*   `io.micrometer:micrometer-tracing-bridge-otel` - bridges the Micrometer Observation API to OpenTelemetry.
+    
+*   `io.opentelemetry:opentelemetry-exporter-zipkin` - reports traces to Zipkin.
+    
+
+Use the `management.zipkin.tracing.*` configuration properties to configure reporting to Zipkin.
+
+### [](#actuator.micrometer-tracing.tracer-implementations.otel-wavefront)OpenTelemetry With Wavefront
+
+Tracing with OpenTelemetry and reporting to Wavefront requires the following dependencies:
+
+*   `io.micrometer:micrometer-tracing-bridge-otel` - bridges the Micrometer Observation API to OpenTelemetry.
+    
+*   `io.micrometer:micrometer-tracing-reporter-wavefront` - reports traces to Wavefront.
+    
+
+Use the `management.wavefront.*` configuration properties to configure reporting to Wavefront.
+
+### [](#actuator.micrometer-tracing.tracer-implementations.otel-otlp)OpenTelemetry With OTLP
+
+Tracing with OpenTelemetry and reporting using OTLP requires the following dependencies:
+
+*   `io.micrometer:micrometer-tracing-bridge-otel` - bridges the Micrometer Observation API to OpenTelemetry.
+    
+*   `io.opentelemetry:opentelemetry-exporter-otlp` - reports traces to a collector that can accept OTLP.
+    
+
+Use the `management.otlp.tracing.*` configuration properties to configure reporting using OTLP.
+
+### [](#actuator.micrometer-tracing.tracer-implementations.brave-zipkin)OpenZipkin Brave With Zipkin
+
+Tracing with OpenZipkin Brave and reporting to Zipkin requires the following dependencies:
+
+*   `io.micrometer:micrometer-tracing-bridge-brave` - bridges the Micrometer Observation API to Brave.
+    
+*   `io.zipkin.reporter2:zipkin-reporter-brave` - reports traces to Zipkin.
+    
+
+Use the `management.zipkin.tracing.*` configuration properties to configure reporting to Zipkin.
+
+### [](#actuator.micrometer-tracing.tracer-implementations.brave-wavefront)OpenZipkin Brave With Wavefront
+
+Tracing with OpenZipkin Brave and reporting to Wavefront requires the following dependencies:
+
+*   `io.micrometer:micrometer-tracing-bridge-brave` - bridges the Micrometer Observation API to Brave.
+    
+*   `io.micrometer:micrometer-tracing-reporter-wavefront` - reports traces to Wavefront.
+    
+
+Use the `management.wavefront.*` configuration properties to configure reporting to Wavefront.
+
+[](#actuator.micrometer-tracing.micrometer-observation)Integration with Micrometer Observation
+----------------------------------------------------------------------------------------------
+
+A `TracingAwareMeterObservationHandler` is automatically registered on the `ObservationRegistry`, which creates spans for every completed observation.
+
+[](#actuator.micrometer-tracing.creating-spans)Creating Custom Spans
+--------------------------------------------------------------------
+
+You can create your own spans by starting an observation. For this, inject `ObservationRegistry` into your component:
+
+    import io.micrometer.observation.Observation;
+    import io.micrometer.observation.ObservationRegistry;
+    
+    import org.springframework.stereotype.Component;
+    
+    @Component
+    class CustomObservation {
+    
+    	private final ObservationRegistry observationRegistry;
+    
+    	CustomObservation(ObservationRegistry observationRegistry) {
+    		this.observationRegistry = observationRegistry;
+    	}
+    
+    	void someOperation() {
+    		Observation observation = Observation.createNotStarted("some-operation", this.observationRegistry);
+    		observation.lowCardinalityKeyValue("some-tag", "some-value");
+    		observation.observe(() -> {
+    			// Business logic ...
+    		});
+    	}
+    
     }
 
-    @Bean
-    public Binding logsBinding(final Queue logsQueue,
-        final TopicExchange logsExchange) {
-        return BindingBuilder.bind(logsQueue)
-        .to(logsExchange).with("#");
+This will create an observation named "some-operation" with the tag "some-tag=some-value".
+
+If you want to create a span without creating a metric, you need to use the [lower-level `Tracer` API](https://docs.micrometer.io/tracing/reference/1.3/api) from Micrometer.
+
+[](#actuator.micrometer-tracing.baggage)Baggage
+-----------------------------------------------
+
+You can create baggage with the `Tracer` API:
+
+    import io.micrometer.tracing.BaggageInScope;
+    import io.micrometer.tracing.Tracer;
+    
+    import org.springframework.stereotype.Component;
+    
+    @Component
+    class CreatingBaggage {
+    
+    	private final Tracer tracer;
+    
+    	CreatingBaggage(Tracer tracer) {
+    		this.tracer = tracer;
+    	}
+    
+    	void doSomething() {
+    		try (BaggageInScope scope = this.tracer.createBaggageInScope("baggage1", "value1")) {
+    			// Business logic
+    		}
+    	}
+    
     }
-}
-```
-The next step is to create a simple service with the @RabbitListener that maps 
-the logging level of the received messages, passed as a RabbitMQ message header, to a 
-logging level in the Logs microservice, using the corresponding log.info(), 
-log.error(), or log.warn(). Note that you use the @Header annotation here to extract 
-AMQP headers as method arguments. You also use a logging Marker to add the 
-application name (appId) to the log line without needing to concatenate it as part of the 
-message. This is a flexible way in the SLF4J standard to add contextual values to logs
-```java
-package microservices.book.logs;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.messaging.handler.annotation.Header;
-import org.springframework.stereotype.Service;
-import org.slf4j.Marker;
-import org.slf4j.MarkerFactory;
-import lombok.extern.slf4j.Slf4j;
-@Slf4j
-@Service
-public class LogsConsumer {
-    @RabbitListener(queues = "logs.queue")
-    public void log(final String msg,
-    @Header("level") String level,
-    @Header("amqp_appId") String appId) {
-        Marker marker = MarkerFactory.getMarker(appId);
-        switch (level) {
-            case "INFO" -> log.info(marker, msg);
-            case "ERROR" -> log.error(marker, msg);
-            case "WARN" -> log.warn(marker, msg);
-        }
-    }
-}
-```
-Finally, customize the log output produced by this new microservice. Since it’ll 
-aggregate multiple logs from different services, the most relevant property is the 
-application name. You must override the Spring Boot defaults this time and define a 
-simple format in a logback-spring.xml file for the CONSOLE appender that outputs the 
-marker, the level, and the message
-```xml
-<configuration>
-    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <layout class="ch.qos.logback.classic.PatternLayout">
-            <Pattern>
-            [%-15marker] %highlight(%-5level) %msg%n
-            </Pattern>
-        </layout>
-    </appender>
-    <root level="INFO">
-        <appender-ref ref="CONSOLE" />
-    </root>
-</configuration>
-```
-That’s all the code you need in this new project. Now you can build the sources and 
-start this new microservice with the rest of the components in your system.
-1. Run the RabbitMQ server.
+
+This example creates baggage named `baggage1` with the value `value1`. The baggage is automatically propagated over the network if you’re using W3C propagation. If you’re using B3 propagation, baggage is not automatically propagated. To manually propagate baggage over the network, use the `management.tracing.baggage.remote-fields` configuration property (this works for W3C, too). For the example above, setting this property to `baggage1` results in an HTTP header `baggage1: value1`.
+
+If you want to propagate the baggage to the MDC, use the `management.tracing.baggage.correlation.fields` configuration property. For the example above, setting this property to `baggage1` results in an MDC entry named `baggage1`.
+
+[](#actuator.micrometer-tracing.tests)Tests
+-------------------------------------------
+
+Tracing components which are reporting data are not auto-configured when using `@SpringBootTest`. See [Using Tracing](../testing/spring-boot-applications.html#testing.spring-boot-applications.tracing) for more details.
+
+Run Example
+-------------------------------------------
+1. Run the Zipkin server.
 
     docker compose up
-1. Start the service1 microservice.
+2. Start the service1 microservice.
 
     cd service1/
 
    ./mvnw spring-boot:run
-2. Start the Logs microservice.
+3. Start the service2 microservice.
 
-    cd logs/
+    cd service2/
 
     ./mvnw spring-boot:run
 
-Once you start this new microservice, it’ll consume all log messages produced by the 
-other applications. To see that in practice, 
-
 curl http://localhost:8080/service1/hello
+
+open zipkin http://localhost:9411/

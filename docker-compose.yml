@@ -1,31 +1,29 @@
-
 services:
-
   # service1:
   #     build:
-  #       context: ./multiplication
+  #       context: ./service1
   #       dockerfile: Dockerfile
-  #     environment:
-  #     - SPRING_PROFILES_ACTIVE=docker
-  #     - SPRING_CLOUD_CONSUL_HOST=consul
-  #     - LOKI_HOST=http://loki:3100/loki/api/v1/push
-  #     depends_on:
-  #       - rabbitmq-dev
-  #       - consul-importer
+  #     ports:
+  #       - "8080:8080"
   #     networks:
-  #       - spring-rabbitmq-logging
+  #       - tracing-spring-zipkin
+  # service2:
+  #     build:
+  #       context: ./service2
+  #       dockerfile: Dockerfile
+  #     ports:
+  #       - "8081:8081"
+  #     networks:
+  #       - tracing-spring-zipkin
 
-  rabbitmq-dev:
-    image: rabbitmq:3-management
-    container_name: rabbitmq
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
     ports:
-      - '5672:5672'
-      - '15672:15672'
+      - "9411:9411"
     networks:
-      - spring-rabbitmq-logging
-      
+      - tracing-spring-zipkin
+
 networks:
-  spring-rabbitmq-logging:
+  tracing-spring-zipkin:
     driver: bridge
-# Prometheus: http://localhost:9090/
-# Grafana: http://localhost:3000/

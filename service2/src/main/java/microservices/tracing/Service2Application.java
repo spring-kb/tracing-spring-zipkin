@@ -1,13 +1,13 @@
-package microservices.logs;
+package microservices.tracing;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class LogsApplication {
+public class Service2Application {
 
 	public static void main(String[] args) {
-		SpringApplication.run(LogsApplication.class, args);
+		SpringApplication.run(Service2Application.class, args);
 	}
 
 }
